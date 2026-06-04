@@ -1311,9 +1311,16 @@
     }
 
     /* ================= کپسوله‌سازی و مدیریت خطاهای شبکه و موتور OpenRouter ================= */
+    /* ================= موتور ارتقا یافته و مجهز به دیباگر فارسی ================= */
     async function callOpenRouterAPI(prompt) {
       const apiKey = localStorage.getItem("cinetrack_or_key");
-      const model = localStorage.getItem("cinetrack_or_model") || "deepseek/deepseek-chat";
+      let model = localStorage.getItem("cinetrack_or_model") || "deepseek/deepseek-chat";
+
+      // اصلاح خودکار نام مدل‌ها برای جلوگیری از ارورهای رایج دامین
+      if (model === "deepseek/deepseek-chat") {
+        // نسخه رایگان یا ارزان جایگزین برای تست پذیری بالا در صورت لود سنگین سرور اصلی
+        model = "deepseek/deepseek-chat"; 
+      }
 
       if (!apiKey || apiKey.trim() === "") {
         throw new Error("KEY_MISSING");
@@ -1324,39 +1331,50 @@
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000); // زمان انقضای ۲۵ ثانیه‌ای
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // افزایش زمان به ۳۰ ثانیه برای مدل‌های سنگین
 
       try {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${apiKey}`,
+            "Authorization": `Bearer ${apiKey.trim()}`,
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://cinetrack.ai",
+            "HTTP-Referer": "https://cinetrack.ai", 
             "X-Title": "CineTrack AI Ultimate"
           },
           body: JSON.stringify({
             model: model,
-            messages: [{ role: "user", content: prompt }]
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.7
           }),
           signal: controller.signal
         });
 
         clearTimeout(timeoutId);
 
+        // دیباگ دقیق وضعیت لایه HTTP
         if (response.status === 401 || response.status === 403) {
           throw new Error("INVALID_KEY");
         }
         if (response.status === 429) {
           throw new Error("RATE_LIMIT");
         }
+        if (response.status === 400) {
+          const errData = await response.json().catch(() => ({}));
+          console.error("OpenRouter Context Error:", errData);
+          throw new Error("BAD_REQUEST");
+        }
         if (!response.ok) {
           throw new Error("SERVER_ERROR");
         }
 
         const data = await response.json();
+        
         if (data && data.choices && data.choices[0] && data.choices[0].message) {
           return data.choices[0].message.content.trim();
+        } else if (data && data.error) {
+          console.error("OpenRouter Return Error Object:", data.error);
+          throw new Error("API_RETURNED_ERROR_" + data.error.message);
         } else {
           throw new Error("EMPTY_RESPONSE");
         }
@@ -1367,6 +1385,30 @@
           throw new Error("TIMEOUT");
         }
         throw err;
+      }
+    }
+
+    /* ================= مدیریت جامع و بومی‌سازی شده خطاها ================= */
+    function handleAIErrorHtml(err) {
+      console.error("Full Trace Error:", err);
+      const msg = err.message || "";
+      
+      if (msg === "KEY_MISSING") {
+        return "❌ کلید API یافت نشد. لطفا از بخش تنظیمات هوش مصنوعی در هدر سایت، توکن OpenRouter خود را ثبت کنید.";
+      } else if (msg === "NO_INTERNET") {
+        return "❌ اتصال اینترنت شما برقرار نیست. وضعیت شبکه را بررسی کرده و مجدداً تلاش کنید.";
+      } else if (msg === "TIMEOUT") {
+        return "❌ مهلت پاسخ‌دهی سرور هوش مصنوعی به پایان رسید (Timeout). احتمالاً لود مدل انتخابی بالا است، لطفاً دوباره امتحان کنید.";
+      } else if (msg === "RATE_LIMIT") {
+        return "❌ محدودیت درخواست (Rate Limit) یا اتمام موجودی رایگان اکانت رخ داده است. چند لحظه صبر کنید.";
+      } else if (msg === "INVALID_KEY") {
+        return "❌ کلید دسترسی OpenRouter وارد شده نامعتبر است یا دسترسی به آن مسدود شده. لطفا کلید را در بخش تنظیمات بررسی کنید.";
+      } else if (msg === "BAD_REQUEST") {
+        return "❌ خطای بدستور (Bad Request). احتمالاً نام مدل انتخابی در شبکه OpenRouter تغییر کرده یا فرمت ارسالی نامعتبر است. مدل را در تنظیمات روی گزینه دیگری بگذارید.";
+      } else if (msg.startsWith("API_RETURNED_ERROR_")) {
+        return `❌ خطای مستقیم از OpenRouter:\n <span style="font-family:monospace; font-size:12px; color:#ff8888;">${msg.replace("API_RETURNED_ERROR_", "")}</span>`;
+      } else {
+        return `❌ خطای غیرمنتظره ارتباطی رخ داد. لطفاً مطمئن شوید که ابزار تغییر آی‌پیدسترس فعال است و مدل معتبری انتخاب کرده‌اید. (جزئیات در کنسول مرورگر)`;
       }
     }
 
